@@ -1,84 +1,116 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const shortid = require('shortid');
 const app = express();
-const mongoose = require('mongoose')
-const bodyParser = require('body-parser');
+const BodyParser = require('body-parser');
+const DNS = require('dns');
 
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json())
 
-mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
-
-// Basic Configuration
-const port = process.env.PORT || 3000;
-
-const urlSchema = new mongoose.Schema(
+app.use(BodyParser.urlencoded(
   {
-      original: { type: String, required: true },
-      short: { type: String, required: true }
+    extended: false
   }
-);
+));
 
-const Url = mongoose.model('Url', urlSchema);
+
+const port = process.env.PORT || 3000;
 
 app.use(cors());
 
 app.use('/public', express.static(`${process.cwd()}/public`));
 
-app.get('/', function(req, res) {
+app.get('/', function (req, res) {
   res.sendFile(process.cwd() + '/views/index.html');
 });
 
-// Your first API endpoint
-app.get('/api/hello', function(req, res) {
-  res.json({ greeting: 'hello API' });
-});
 
-app.get('/api/shorturl/:short_url', function(req, res) {
-  const short = req.params.short_url;
+const URLs = [];
 
-  Url.findOne({ short: short })
-  .exec()
-  .then((data) => {
-    if (!data) {
-      return res.json("URL not found");
-    } else {
-      res.redirect(data.original);
+
+let id = 0;
+
+// post request to create the shortened url
+app.post('/api/shorturl', (req, res) => {
+  const { url: _url } = req.body;
+
+  if (_url === "") {
+    return res.json(
+      {
+        "error": "invalid url"
+      }
+    );
+  }
+
+  let parsed_url;
+  const modified_url = _url.replace(/(ftp|http|https):\/\/(\w+:{0,1}\w*@)?(\S+)(:[0-9]+)?(\/|\/([\w#!:.?+=&%@!\-\/]))?/, '');
+
+  try {
+    parsed_url = new URL(_url);
+  }
+  catch (err) {
+    return res.json(
+      {
+        "error": "invalid url"
+      }
+    );
+  }
+
+  DNS.lookup(modified_url, (err) => {
+    if (err) {
+      return res.json(
+        {
+          "error": "invalid url"
+        }
+      );
     }
-  })
-  .catch((err) => {
-    console.error(err);
-    res.json("Error occurred while looking up the URL");
+    else {
+      const link_exists = URLs.find(l => l.original_url === _url)
+
+      if (link_exists) {
+        return res.json(
+          {
+            "original_url": _url,
+            "short_url": id
+          }
+        );
+      }
+      else {
+        
+        ++id;
+
+        
+        const url_object = {
+          "original_url": _url,
+          "short_url": `${id}`
+        };
+
+        
+        URLs.push(url_object);
+
+        
+        return res.json(
+          {
+            "original_url": _url,
+            "short_url": id
+          }
+        );
+      }
+    }
   });
 });
 
-app.post('/api/shorturl', async (req, res) => {
-  const url = req.body.url;
-  const pattern = /^https?:\/\/(www\.)?[\w-]+\.[a-z]+(\.[a-z]+)?(\/\S*)?$/;
+app.get('/api/shorturl/:short_url', (req, res) => {
+  const short_url = req.params.short_url;
+  const url_object = URLs.find(url => url.short_url === short_url);
 
-  if (pattern.test(url)) {
-    const short = shortid.generate();
-
-    Url.findOneAndUpdate(
-      { original: url },
-      { original: url, short: short },
-      { new: true, upsert: true }
-    )
-      .exec()
-      .then((newUrl) => {
-        res.json({ original_url: url, short_url: newUrl.short });
-      })
-      .catch((err) => {
-        console.error(err);
-        res.json({ error: "An error occurred while creating the short URL" });
-      });
+  if (url_object) {
+    return res.redirect(url_object.original_url);
   } else {
-    res.json({ error: 'invalid url' });
+    return res.json({
+      "error": "short URL not found"
+    });
   }
 });
-
 
 app.listen(port, function() {
   console.log(`Listening on port ${port}`);
